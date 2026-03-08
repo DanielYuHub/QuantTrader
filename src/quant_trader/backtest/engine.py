@@ -72,10 +72,11 @@ class BacktestEngine:
                 mode=StrategyMode.BACKTEST,
                 positions={k: p.quantity for k, p in accounting.positions.items()},
             )
-            signal_event = StrategyEvent(timestamp=bar.timestamp, instrument_id=bar.symbol, price=bar.close)
-            result = self._strategy_engine.process_event(signal_event, context)
-            for target in result.targets:
-                pending_targets[target.instrument_id].append(PendingTarget(timestamp=bar.timestamp, target=target))
+            if self._should_emit_strategy_event(bar, inputs.option_contracts):
+                signal_event = StrategyEvent(timestamp=bar.timestamp, instrument_id=bar.symbol, price=bar.close)
+                result = self._strategy_engine.process_event(signal_event, context)
+                for target in result.targets:
+                    pending_targets[target.instrument_id].append(PendingTarget(timestamp=bar.timestamp, target=target))
 
             # 3) process option expiration hooks
             self._process_option_expiration(bar.timestamp, accounting, inputs.option_contracts, marks=self._latest_marks(inputs, bar.timestamp))
@@ -190,3 +191,14 @@ class BacktestEngine:
                 cash_adjustment = self._option_hook.on_expiration(position, spot, timestamp)
                 accounting.cash += cash_adjustment
                 accounting.positions[instrument_id] = position.model_copy(update={"quantity": 0, "average_price": 0.0})
+
+    @staticmethod
+    def _should_emit_strategy_event(bar: Bar, option_contracts: dict[str, OptionContract]) -> bool:
+        """Return whether a bar should be converted into a strategy event."""
+
+        contract = option_contracts.get(bar.symbol)
+        if contract is None:
+            return True
+        if contract.expiry <= bar.timestamp and bar.close <= 0:
+            return False
+        return True

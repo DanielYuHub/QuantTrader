@@ -38,6 +38,20 @@ class BuyOptionStrategy(BaseStrategy):
         ]
 
 
+class RecordingStrategy(BaseStrategy):
+    """Records strategy events for backtest assertions."""
+
+    strategy_id = "recording"
+
+    def __init__(self) -> None:
+        self.seen_events: list[tuple[str, float]] = []
+
+    def on_event(self, event: StrategyEvent, context: StrategyContext) -> list[StrategySignal]:
+        _ = context
+        self.seen_events.append((event.instrument_id, event.price))
+        return []
+
+
 
 def _bar(ts: datetime, symbol: str, open_price: float, close_price: float) -> Bar:
     return Bar(
@@ -94,3 +108,46 @@ def test_option_expiration_closes_position() -> None:
 
     assert len(result.fills) >= 1
     assert result.equity_curve[-1].equity > 0
+
+
+def test_expired_zero_value_option_bar_is_not_emitted_to_strategy() -> None:
+    """Expired option zero-close bars should not be forwarded as strategy events."""
+
+    t0 = datetime(2025, 1, 2, 15, 0, tzinfo=timezone.utc)
+    t1 = t0 + timedelta(days=1)
+    contract_symbol = "AAPL250103C00100000"
+
+    option_bars = [_bar(t0, contract_symbol, 2.0, 2.1), _bar(t1, contract_symbol, 2.2, 0.0)]
+    underlying_bars = [_bar(t0, "AAPL", 100.0, 101.0), _bar(t1, "AAPL", 105.0, 106.0)]
+    benchmark = [_bar(t0, "SPY", 500.0, 501.0), _bar(t1, "SPY", 502.0, 503.0)]
+
+    option_contract = OptionContract(
+        contract_symbol=contract_symbol,
+        underlying_symbol="AAPL",
+        market=Market.US,
+        expiry=t1,
+        strike=100.0,
+        right=OptionRight.CALL,
+    )
+
+    strategy = RecordingStrategy()
+    strategy_engine = StrategyEngine(
+        strategies=[strategy],
+        portfolio_constructor=PortfolioConstructor(PortfolioConstructionConfig(base_lot_size=1, min_strength_threshold=0.0)),
+    )
+    backtest = BacktestEngine(
+        strategy_engine=strategy_engine,
+        calendar=TradingCalendar(),
+        slippage_model=SlippageModel(bps=0),
+        commission_model=CommissionModel(option_per_contract=0.0, minimum_ticket=0.0),
+    )
+
+    backtest.run(
+        BacktestInputs(
+            bars_by_instrument={contract_symbol: option_bars, "AAPL": underlying_bars},
+            benchmark_bars=benchmark,
+            option_contracts={contract_symbol: option_contract},
+        )
+    )
+
+    assert (contract_symbol, 0.0) not in strategy.seen_events
