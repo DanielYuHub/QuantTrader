@@ -1,0 +1,2 @@
+# QuantTrader
+Quantitative trading
