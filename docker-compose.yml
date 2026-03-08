@@ -1,0 +1,49 @@
+version: "3.9"
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: quant_trader_app
+    env_file:
+      - .env
+    volumes:
+      - ./:/app
+    command: ["python", "-m", "quant_trader.main"]
+    depends_on:
+      - db
+    healthcheck:
+      test: ["CMD", "python", "scripts/healthcheck.py"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  scheduler:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: quant_trader_scheduler
+    env_file:
+      - .env
+    volumes:
+      - ./:/app
+    command: ["python", "scripts/run_scheduler.py"]
+    depends_on:
+      - app
+
+  db:
+    image: postgres:16-alpine
+    container_name: quant_trader_db
+    environment:
+      POSTGRES_USER: quant
+      POSTGRES_PASSWORD: quant
+      POSTGRES_DB: quanttrader
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+volumes:
+  pgdata:

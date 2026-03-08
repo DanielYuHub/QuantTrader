@@ -1,0 +1,6 @@
+CREATE TABLE IF NOT EXISTS app_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  event_type TEXT NOT NULL,
+  payload TEXT,
+  created_at TEXT NOT NULL
+);
