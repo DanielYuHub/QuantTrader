@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from quant_trader.models.common import AssetClass
+from quant_trader.models.common import AssetClass, Side
 
 
 @dataclass(frozen=True)
@@ -13,11 +13,12 @@ class SlippageModel:
 
     bps: float = 1.0
 
-    def apply(self, price: float) -> tuple[float, float]:
-        """Return slipped price and absolute slippage value."""
+    def apply(self, price: float, side: Side) -> tuple[float, float]:
+        """Return side-aware slipped price and absolute slippage value."""
 
         delta = price * (self.bps / 10_000)
-        return price + delta, abs(delta)
+        slipped_price = price + delta if side is Side.BUY else price - delta
+        return slipped_price, abs(delta)
 
 
 @dataclass(frozen=True)

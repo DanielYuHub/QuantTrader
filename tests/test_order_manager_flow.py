@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from uuid import uuid4
 
 import pytest
 
@@ -11,6 +12,7 @@ from quant_trader.execution.service import ExecutionService
 from quant_trader.models.common import (
     AssetClass,
     MarketQuote,
+    Order,
     OrderRequest,
     OrderStatus,
     OrderType,
@@ -157,7 +159,7 @@ def test_cancel_replace_flow_for_limit_to_stop_order() -> None:
     )
 
     created = manager.create_order(initial, latest_quote=_quote())
-    replaced = manager.replace_order(created.order_id, replacement)
+    replaced = manager.replace_order(created.order_id, replacement, latest_quote=_quote())
     canceled = manager.cancel_order(created.order_id)
 
     assert replaced.status == OrderStatus.REPLACED
@@ -239,3 +241,83 @@ def test_overfill_is_rejected() -> None:
 
     with pytest.raises(ValueError, match="Overfill"):
         manager.process_fill(fill)
+
+
+def test_replace_order_runs_risk_checks_before_broker_submission() -> None:
+    """Replace should perform risk checks and reject stale-quote flows."""
+
+    manager, _, _ = _build_manager()
+    initial = OrderRequest(
+        idempotency_key="rep-risk-1",
+        instrument_id="AAPL",
+        side=Side.BUY,
+        quantity=5,
+        order_type=OrderType.LIMIT,
+        limit_price=99.5,
+    )
+    replacement = OrderRequest(
+        idempotency_key="rep-risk-2",
+        instrument_id="AAPL",
+        side=Side.BUY,
+        quantity=5,
+        order_type=OrderType.STOP,
+        stop_price=101.0,
+    )
+
+    created = manager.create_order(initial, latest_quote=_quote())
+    rejected = manager.replace_order(created.order_id, replacement, latest_quote=_quote(fresh=False))
+
+    assert rejected.status == OrderStatus.REJECTED
+    assert rejected.reject_reason == "stale quote"
+
+
+def test_replace_order_rekeys_local_store_when_broker_returns_new_id() -> None:
+    """OMS should key replaced orders by broker-provided identifier."""
+
+    class RekeyingBroker(InMemoryBroker):
+        def replace_order(self, order_id: str, order_request: OrderRequest) -> Order:
+            existing = self._orders[order_id]
+            new_id = f"ord-repl-{uuid4().hex[:8]}"
+            replaced = existing.model_copy(
+                update={"order_id": new_id, "request": order_request, "status": OrderStatus.REPLACED}
+            )
+            del self._orders[order_id]
+            self._orders[new_id] = replaced
+            return replaced
+
+    broker = RekeyingBroker()
+    execution = ExecutionService(broker)
+    risk = RiskManager(
+        RiskLimits(
+            max_position_size=500,
+            max_order_notional=100_000,
+            daily_loss_limit=10_000,
+            max_orders_per_minute=50,
+            max_stale_quote_seconds=5,
+        )
+    )
+    manager = OrderManager(execution_service=execution, risk_manager=risk, position_updater=PortfolioPositionUpdater())
+
+    initial = OrderRequest(
+        idempotency_key="rep-key-1",
+        instrument_id="AAPL",
+        side=Side.BUY,
+        quantity=5,
+        order_type=OrderType.LIMIT,
+        limit_price=99.5,
+    )
+    replacement = OrderRequest(
+        idempotency_key="rep-key-2",
+        instrument_id="AAPL",
+        side=Side.BUY,
+        quantity=5,
+        order_type=OrderType.STOP,
+        stop_price=101.0,
+    )
+
+    created = manager.create_order(initial, latest_quote=_quote())
+    replaced = manager.replace_order(created.order_id, replacement, latest_quote=_quote())
+
+    assert replaced.order_id != created.order_id
+    assert manager.get_order(created.order_id) is None
+    assert manager.get_order(replaced.order_id) is not None

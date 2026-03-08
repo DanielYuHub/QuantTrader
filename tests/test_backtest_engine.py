@@ -102,3 +102,15 @@ def test_backtest_generates_performance_and_benchmark_metrics() -> None:
     assert "excess_return" in result.performance_report
     assert any("lookahead" in item.lower() for item in result.assumptions)
     assert any("survivorship bias" in item.lower() for item in result.limitations)
+
+
+def test_slippage_is_adverse_for_both_buy_and_sell() -> None:
+    """Slippage should worsen execution price for both trade directions."""
+
+    model = SlippageModel(bps=10)
+    buy_price, buy_slippage = model.apply(100.0, Side.BUY)
+    sell_price, sell_slippage = model.apply(100.0, Side.SELL)
+
+    assert buy_price == 100.1
+    assert sell_price == 99.9
+    assert buy_slippage == sell_slippage == 0.1

@@ -61,7 +61,7 @@ class OrderManager(OrderManagerInterface):
         self._order_keys.add(order_request.idempotency_key)
         return broker_order
 
-    def replace_order(self, order_id: str, order_request: OrderRequest) -> Order:
+    def replace_order(self, order_id: str, order_request: OrderRequest, latest_quote: MarketQuote | None = None) -> Order:
         """Replace an existing order via broker and validate transition."""
 
         if order_request.idempotency_key in self._order_keys:
@@ -70,9 +70,26 @@ class OrderManager(OrderManagerInterface):
 
         existing = self._require_order(order_id)
         validate_transition(existing.status, OrderStatus.REPLACED)
+        now = datetime.now(timezone.utc)
+        positions = self._position_updater.positions()
+        decision = self._risk_manager.evaluate_order(order_request, positions, latest_quote, now)
+
+        if not decision.allowed:
+            rejected = Order(
+                order_id=f"rejected-{order_request.idempotency_key}",
+                request=order_request,
+                status=OrderStatus.REJECTED,
+                reject_reason=decision.reason,
+            )
+            self._orders[rejected.order_id] = rejected
+            self._order_keys.add(order_request.idempotency_key)
+            return rejected
+
         replaced = self._execution_service.replace(order_id, order_request)
         updated = replaced.model_copy(update={"status": OrderStatus.REPLACED, "request": order_request})
-        self._orders[order_id] = updated
+        if replaced.order_id != order_id:
+            del self._orders[order_id]
+        self._orders[replaced.order_id] = updated
         self._order_keys.add(order_request.idempotency_key)
         return updated
 

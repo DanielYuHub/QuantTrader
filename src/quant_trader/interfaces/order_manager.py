@@ -15,7 +15,9 @@ class OrderManagerInterface(ABC):
         """Create and route an order through execution path."""
 
     @abstractmethod
-    def replace_order(self, order_id: str, order_request: OrderRequest) -> Order:
+    def replace_order(
+        self, order_id: str, order_request: OrderRequest, latest_quote: MarketQuote | None = None
+    ) -> Order:
         """Replace an existing order with a modified request."""
 
     @abstractmethod

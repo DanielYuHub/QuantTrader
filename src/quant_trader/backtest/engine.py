@@ -129,7 +129,7 @@ class BacktestEngine:
                 continue
             side = Side.BUY if delta > 0 else Side.SELL
             qty = abs(delta)
-            slipped_price, slippage = self._slippage_model.apply(bar.open)
+            slipped_price, slippage = self._slippage_model.apply(bar.open, side)
             commission, fees = self._commission_model.cost(target.asset_class, qty, slipped_price * qty)
             fill = BacktestFill(
                 timestamp=bar.timestamp,
