@@ -61,7 +61,14 @@ class PortfolioAccounting:
             self.realized_pnl += realized
             self._add_attribution(fill.instrument_id, fill.asset_class, realized)
 
-            pos = pos.model_copy(update={"quantity": new_qty, "average_price": pos.average_price if new_qty != 0 else 0.0})
+            if new_qty == 0:
+                new_average_price = 0.0
+            elif pos.quantity * new_qty > 0:
+                new_average_price = pos.average_price
+            else:
+                new_average_price = fill.price
+
+            pos = pos.model_copy(update={"quantity": new_qty, "average_price": new_average_price})
 
         self.positions[fill.instrument_id] = pos
 

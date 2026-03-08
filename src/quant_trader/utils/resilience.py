@@ -41,12 +41,21 @@ def run_with_retry(func: Callable[P, R], *args: P.args, policy: RetryPolicy, **k
 
 
 def run_with_timeout(func: Callable[P, R], *args: P.args, timeout_seconds: float, **kwargs: P.kwargs) -> R:
-    """Execute function with timeout protection."""
+    """Execute function with timeout protection.
 
-    with ThreadPoolExecutor(max_workers=1) as executor:
-        future = executor.submit(func, *args, **kwargs)
-        try:
-            return future.result(timeout=timeout_seconds)
-        except FutureTimeoutError as exc:
-            msg = f"Operation timed out after {timeout_seconds} seconds"
-            raise TimeoutError(msg) from exc
+    Notes:
+        Python threads cannot be forcefully terminated. On timeout this helper returns control
+        promptly by shutting down the executor with ``wait=False``; a running worker thread may
+        still continue in the background until it finishes.
+    """
+
+    executor = ThreadPoolExecutor(max_workers=1)
+    future = executor.submit(func, *args, **kwargs)
+    try:
+        return future.result(timeout=timeout_seconds)
+    except FutureTimeoutError as exc:
+        future.cancel()
+        msg = f"Operation timed out after {timeout_seconds} seconds"
+        raise TimeoutError(msg) from exc
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
